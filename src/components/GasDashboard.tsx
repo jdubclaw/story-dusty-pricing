@@ -11,6 +11,8 @@ import {
 } from "@/lib/gas-pricing";
 import { fetchRecentBlocks, STORY_MAINNET_RPC_URL } from "@/lib/story-rpc";
 
+const SAMPLE_BLOCKS = 24;
+
 function parseOptionalBigInt(value: string): bigint | undefined {
   const trimmed = value.trim().replaceAll(",", "");
   if (!trimmed) return undefined;
@@ -18,42 +20,31 @@ function parseOptionalBigInt(value: string): bigint | undefined {
   return BigInt(trimmed);
 }
 
-function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Metric({ label, value, subvalue }: { label: string; value: string; subvalue?: string }) {
   return (
-    <div className="rounded-3xl border border-white/10 bg-white/[0.07] p-5 shadow-2xl shadow-cyan-950/20 backdrop-blur">
-      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200/70">{label}</p>
-      <p className="mt-3 break-words text-2xl font-bold text-white">{value}</p>
-      {hint ? <p className="mt-2 text-sm text-slate-300">{hint}</p> : null}
+    <div className="border border-zinc-200 bg-white p-5">
+      <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">{label}</div>
+      <div className="mt-2 font-mono text-2xl font-semibold tracking-tight text-zinc-950">{value}</div>
+      {subvalue ? <div className="mt-1 font-mono text-sm text-zinc-500">{subvalue}</div> : null}
     </div>
   );
 }
 
-function SparkBars({ blocks }: { blocks: BlockMetric[] }) {
-  const maxFee = blocks.reduce((max, block) => (block.observedGasPrice > max ? block.observedGasPrice : max), 1n);
-
+function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex h-36 items-end gap-1 rounded-3xl border border-cyan-300/10 bg-slate-950/60 p-4">
-      {blocks.map((block) => {
-        const feeHeight = Number((block.observedGasPrice * 100n) / maxFee);
-        const utilHeight = Math.max(3, Math.round(block.utilization * 100));
-        return (
-          <div key={block.number} className="flex min-w-1 flex-1 flex-col items-center justify-end gap-1" title={`#${block.number}: ${formatGweiLike(block.observedGasPrice)} · ${formatPercent(block.utilization)}`}>
-            <div className="w-full rounded-t bg-fuchsia-400/80" style={{ height: `${Math.max(3, feeHeight)}%` }} />
-            <div className="w-full rounded-t bg-cyan-300/80" style={{ height: `${utilHeight}%`, maxHeight: "42%" }} />
-          </div>
-        );
-      })}
+    <div className="grid grid-cols-[1fr_auto] gap-4 border-b border-zinc-200 py-3 text-sm last:border-b-0">
+      <div className="text-zinc-500">{label}</div>
+      <div className="font-mono text-zinc-950">{value}</div>
     </div>
   );
 }
 
 export function GasDashboard() {
   const [rpcUrl, setRpcUrl] = useState(STORY_MAINNET_RPC_URL);
-  const [blockCount, setBlockCount] = useState(24);
   const [maxGasPerBlockInput, setMaxGasPerBlockInput] = useState("");
   const [manualGasPriceInput, setManualGasPriceInput] = useState(DEFAULT_LOW_UTILIZATION_GAS_PRICE.toString());
   const [blocks, setBlocks] = useState<BlockMetric[]>([]);
-  const [status, setStatus] = useState("Ready");
+  const [status, setStatus] = useState("Loading");
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
 
@@ -69,16 +60,16 @@ export function GasDashboard() {
 
   const loadBlocks = useCallback(async () => {
     try {
-      const nextBlocks = await fetchRecentBlocks(rpcUrl.trim(), blockCount);
+      const nextBlocks = await fetchRecentBlocks(rpcUrl.trim(), SAMPLE_BLOCKS);
       setBlocks(nextBlocks);
       setUpdatedAt(new Date());
       setError(null);
-      setStatus(`Tracking ${nextBlocks.length} recent blocks`);
+      setStatus("Live");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unknown RPC error");
-      setStatus("RPC fetch failed");
+      setStatus("RPC error");
     }
-  }, [blockCount, rpcUrl]);
+  }, [rpcUrl]);
 
   useEffect(() => {
     const initialId = window.setTimeout(() => void loadBlocks(), 0);
@@ -89,125 +80,117 @@ export function GasDashboard() {
     };
   }, [loadBlocks]);
 
-  const latestBlockRows = [...blocks].reverse().slice(0, 8);
+  const latestBlockRows = [...blocks].reverse().slice(0, 6);
+  const recommendationSource = summary?.spamFilterMode === "manual-low-utilization" ? "manual floor" : "observed median";
 
   return (
-    <main className="min-h-screen overflow-hidden bg-[#050816] text-white">
-      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.24),_transparent_34%),radial-gradient(circle_at_80%_20%,_rgba(217,70,239,0.2),_transparent_30%),linear-gradient(145deg,_#050816_0%,_#111827_45%,_#220a36_100%)]" />
-      <section className="relative mx-auto flex w-full max-w-7xl flex-col gap-8 px-5 py-8 sm:px-8 lg:px-12">
-        <header className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr] lg:items-end">
-          <div>
-            <div className="inline-flex rounded-full border border-cyan-300/30 bg-cyan-300/10 px-4 py-2 text-sm font-medium text-cyan-100">
-              Story mainnet · EIP-1559-style blockspace monitor
+    <main className="min-h-screen bg-zinc-50 text-zinc-950">
+      <section className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-5 py-8 sm:px-8">
+        <header className="border border-zinc-200 bg-white p-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">Story gas price monitor</div>
+              <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">Predicted gas price</h1>
             </div>
-            <h1 className="mt-6 max-w-4xl text-5xl font-black tracking-tight text-white sm:text-7xl">
-              Dusty pricing for Story block space, live.
-            </h1>
-            <p className="mt-5 max-w-2xl text-lg leading-8 text-slate-300">
-              A fully front-end Next.js dashboard that reads recent blocks from an EVM RPC, measures utilization, filters low-utilization 1 gwei spam, and only trusts observed gas prices when blockspace demand is sustained.
-            </p>
-          </div>
-
-          <div className="rounded-[2rem] border border-white/10 bg-white/[0.06] p-5 shadow-2xl shadow-black/30 backdrop-blur">
-            <label className="text-sm font-semibold text-cyan-100" htmlFor="rpc-url">RPC endpoint</label>
-            <input
-              id="rpc-url"
-              className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-white outline-none ring-cyan-300/40 transition focus:ring-4"
-              value={rpcUrl}
-              onChange={(event) => setRpcUrl(event.target.value)}
-            />
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <label className="text-sm font-semibold text-cyan-100">
-                Blocks: {blockCount}
-                <input
-                  className="mt-3 w-full accent-cyan-300"
-                  type="range"
-                  min="6"
-                  max="72"
-                  value={blockCount}
-                  onChange={(event) => setBlockCount(Number(event.target.value))}
-                />
-              </label>
-              <label className="text-sm font-semibold text-cyan-100">
-                Story max gas / block override
-                <input
-                  className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-white outline-none ring-cyan-300/40 transition focus:ring-4"
-                  placeholder="blank = RPC gasLimit"
-                  inputMode="numeric"
-                  value={maxGasPerBlockInput}
-                  onChange={(event) => setMaxGasPerBlockInput(event.target.value)}
-                />
-              </label>
-              <label className="text-sm font-semibold text-cyan-100 sm:col-span-2">
-                Manual low-utilization gas price, dusty / gas
-                <input
-                  className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-white outline-none ring-cyan-300/40 transition focus:ring-4"
-                  inputMode="numeric"
-                  value={manualGasPriceInput}
-                  onChange={(event) => setManualGasPriceInput(event.target.value)}
-                />
-              </label>
+            <div className="text-right font-mono text-sm text-zinc-500">
+              <div>{status}</div>
+              <div>{updatedAt ? updatedAt.toLocaleTimeString() : "--"}</div>
             </div>
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <button className="rounded-full bg-cyan-300 px-5 py-3 text-sm font-bold text-slate-950 transition hover:bg-cyan-200" onClick={() => void loadBlocks()}>
-                Refresh now
-              </button>
-              <span className="text-sm text-slate-300">{status}</span>
-              {updatedAt ? <span className="text-sm text-slate-400">Updated {updatedAt.toLocaleTimeString()}</span> : null}
-            </div>
-            {error ? <p className="mt-4 rounded-2xl border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-100">{error}</p> : null}
           </div>
         </header>
 
-        {summary ? (
-          <>
-            <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <StatCard label="Recommended gas price" value={formatGweiLike(summary.spamFilteredGasPrice)} hint={`${formatDusty(summary.spamFilteredGasPrice)} dusty / gas · ${summary.spamFilterMode === "manual-low-utilization" ? "spam filter active" : "observed price trusted"}`} />
-              <StatCard label="Observed latest gas price" value={formatGweiLike(summary.latestObservedGasPrice)} hint="Median tx gas price in latest block" />
-              <StatCard label="Latest utilization" value={formatPercent(summary.latestUtilization)} hint={`${formatDusty(summary.latestGasUsed)} / ${formatDusty(maxGasPerBlock ?? summary.latestGasLimit)} gas`} />
-              <StatCard label="Sustained demand signal" value={formatPercent(summary.highUtilizationBlockRatio)} hint="Blocks over 50% utilization in this window" />
-            </section>
-
-            <section className="grid gap-6 lg:grid-cols-[1fr_420px]">
-              <div className="rounded-[2rem] border border-white/10 bg-white/[0.06] p-5 backdrop-blur">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-2xl font-bold">Recent block trend</h2>
-                    <p className="text-sm text-slate-300">Fuchsia = observed gas price, cyan = gas utilization.</p>
-                  </div>
-                  <p className="text-sm text-slate-400">Latest #{summary.latestNumber.toLocaleString()}</p>
+        <section className="grid gap-4 lg:grid-cols-[1fr_360px]">
+          <div className="border border-zinc-200 bg-white p-6">
+            {summary ? (
+              <>
+                <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">recommended</div>
+                <div className="mt-3 font-mono text-5xl font-semibold tracking-tight text-zinc-950 sm:text-7xl">
+                  {formatGweiLike(summary.spamFilteredGasPrice)}
                 </div>
-                <SparkBars blocks={blocks} />
-              </div>
+                <div className="mt-3 font-mono text-base text-zinc-500">
+                  {formatDusty(summary.spamFilteredGasPrice)} dusty / gas
+                </div>
+                <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                  <Metric label="latest block" value={`#${summary.latestNumber.toLocaleString()}`} />
+                  <Metric label="utilization" value={formatPercent(summary.latestUtilization)} />
+                  <Metric label="source" value={recommendationSource} />
+                </div>
+              </>
+            ) : (
+              <div className="font-mono text-zinc-500">Waiting for latest block data...</div>
+            )}
+          </div>
 
-              <div className="rounded-[2rem] border border-white/10 bg-white/[0.06] p-5 backdrop-blur">
-                <h2 className="text-2xl font-bold">Spam filter</h2>
-                <p className="mt-3 text-sm leading-7 text-slate-300">
-                  One 1 gwei spam transaction in an otherwise empty block should not define the market price. The dashboard recommends the manual low-utilization price until at least 60% of the sampled blocks are above 50% utilization; only then does it trust the observed median transaction gas price.
-                </p>
-                <code className="mt-4 block rounded-2xl bg-slate-950/80 p-4 text-xs leading-6 text-cyan-100">
-                  if sustainedUtilization &lt; 60% → use manual low price; else → use observed median gas price
-                </code>
-              </div>
-            </section>
+          <div className="border border-zinc-200 bg-white p-5">
+            <label className="text-xs font-medium uppercase tracking-wide text-zinc-500" htmlFor="rpc-url">
+              RPC endpoint
+            </label>
+            <input
+              id="rpc-url"
+              className="mt-2 w-full border border-zinc-300 bg-white px-3 py-2 font-mono text-sm outline-none focus:border-zinc-950"
+              value={rpcUrl}
+              onChange={(event) => setRpcUrl(event.target.value)}
+            />
 
-            <section className="rounded-[2rem] border border-white/10 bg-white/[0.06] p-5 backdrop-blur">
-              <h2 className="text-2xl font-bold">Latest blocks</h2>
-              <div className="mt-4 grid gap-3">
-                {latestBlockRows.map((block) => (
-                  <div key={block.number} className="grid gap-3 rounded-2xl border border-white/10 bg-slate-950/50 p-4 text-sm md:grid-cols-4">
-                    <span className="font-semibold text-white">#{block.number.toLocaleString()}</span>
-                    <span className="text-slate-300">{formatGweiLike(block.observedGasPrice)} observed</span>
-                    <span className="text-slate-300">{formatPercent(block.utilization)} full</span>
-                    <span className="truncate text-slate-500">{block.hash ?? "pending hash"}</span>
-                  </div>
-                ))}
+            <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-zinc-500">
+              Manual low-use price, dusty / gas
+              <input
+                className="mt-2 w-full border border-zinc-300 bg-white px-3 py-2 font-mono text-sm outline-none focus:border-zinc-950"
+                inputMode="numeric"
+                value={manualGasPriceInput}
+                onChange={(event) => setManualGasPriceInput(event.target.value)}
+              />
+            </label>
+
+            <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-zinc-500">
+              Max gas / block override
+              <input
+                className="mt-2 w-full border border-zinc-300 bg-white px-3 py-2 font-mono text-sm outline-none focus:border-zinc-950"
+                placeholder="blank = RPC gasLimit"
+                inputMode="numeric"
+                value={maxGasPerBlockInput}
+                onChange={(event) => setMaxGasPerBlockInput(event.target.value)}
+              />
+            </label>
+
+            <button className="mt-4 w-full border border-zinc-950 bg-zinc-950 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800" onClick={() => void loadBlocks()}>
+              Refresh
+            </button>
+            {error ? <div className="mt-4 border border-zinc-300 bg-zinc-50 p-3 font-mono text-xs text-zinc-800">{error}</div> : null}
+          </div>
+        </section>
+
+        {summary ? (
+          <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <Metric label="observed latest" value={formatGweiLike(summary.latestObservedGasPrice)} subvalue={`${formatDusty(summary.latestObservedGasPrice)} dusty`} />
+            <Metric label="gas used" value={formatDusty(summary.latestGasUsed)} subvalue={`/ ${formatDusty(maxGasPerBlock ?? summary.latestGasLimit)}`} />
+            <Metric label="high-use blocks" value={formatPercent(summary.highUtilizationBlockRatio)} subvalue={`last ${blocks.length} blocks`} />
+            <Metric label="avg utilization" value={formatPercent(summary.averageUtilization)} />
+          </section>
+        ) : null}
+
+        <section className="grid gap-4 lg:grid-cols-[1fr_360px]">
+          <div className="border border-zinc-200 bg-white p-5">
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">latest blocks</div>
+            {latestBlockRows.map((block) => (
+              <div key={block.number} className="grid grid-cols-2 gap-2 border-b border-zinc-200 py-3 font-mono text-sm last:border-b-0 sm:grid-cols-4">
+                <div>#{block.number.toLocaleString()}</div>
+                <div>{formatGweiLike(block.observedGasPrice)}</div>
+                <div>{formatPercent(block.utilization)}</div>
+                <div className="truncate text-zinc-500">{block.hash ?? "--"}</div>
               </div>
-            </section>
-          </>
-        ) : (
-          <div className="rounded-[2rem] border border-white/10 bg-white/[0.06] p-8 text-slate-300">Waiting for block data…</div>
-        )}
+            ))}
+          </div>
+
+          <div className="border border-zinc-200 bg-white p-5">
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">units</div>
+            <Row label="dusty" value="smallest gas price unit" />
+            <Row label="1 gwei" value="1,000,000,000 dusty" />
+            <Row label="0.0001 gwei" value="100,000 dusty" />
+            <Row label="sample window" value={`${SAMPLE_BLOCKS} blocks`} />
+            <Row label="trust observed if" value=">=60% blocks over 50% full" />
+          </div>
+        </section>
       </section>
     </main>
   );
