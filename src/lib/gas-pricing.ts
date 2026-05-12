@@ -58,7 +58,7 @@ export type SpamFilterOptions = {
 
 const BASE_FEE_MAX_CHANGE_DENOMINATOR = 8n;
 const ELASTICITY_MULTIPLIER = 2n;
-export const DEFAULT_LOW_UTILIZATION_GAS_PRICE = 100_000n; // 0.0001 Gdusty / gas.
+export const DEFAULT_LOW_UTILIZATION_GAS_PRICE = 100_000n; // 0.0001 gwei / gas.
 const DEFAULT_HIGH_UTILIZATION_THRESHOLD = 0.5;
 const DEFAULT_SUSTAINED_HIGH_UTILIZATION_RATIO = 0.6;
 
@@ -210,18 +210,22 @@ export function summarizeBlocks(
   };
 }
 
-export function formatDusty(value: bigint): string {
+export function formatInteger(value: bigint): string {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
 }
 
-export function formatGweiLike(value: bigint): string {
-  if (value < 1_000_000_000n) {
-    return `${formatDusty(value)} dusty`;
+export function formatWei(value: bigint): string {
+  return formatInteger(value);
+}
+
+export function formatGasPrice(value: bigint): string {
+  if (value <= 999_999n) {
+    return `${formatWei(value)} wei`;
   }
 
   return `${(Number(value) / 1_000_000_000).toLocaleString("en-US", {
-    maximumFractionDigits: 4,
-  })} Gdusty`;
+    maximumFractionDigits: 6,
+  })} gwei`;
 }
 
 export function formatPercent(value: number): string {

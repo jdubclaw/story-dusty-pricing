@@ -3,7 +3,8 @@ import {
   calculateNextBaseFeePerGas,
   DEFAULT_LOW_UTILIZATION_GAS_PRICE,
   estimateSpamFilteredGasPrice,
-  formatDusty,
+  formatGasPrice,
+  formatInteger,
   normalizeRpcBlock,
   summarizeBlocks,
 } from "./gas-pricing";
@@ -129,8 +130,19 @@ describe("summarizeBlocks", () => {
   });
 });
 
-describe("formatDusty", () => {
-  it("formats integer dusty values with compact separators", () => {
-    expect(formatDusty(1_234_567_890n)).toBe("1,234,567,890");
+describe("formatInteger", () => {
+  it("formats integer values with compact separators", () => {
+    expect(formatInteger(1_234_567_890n)).toBe("1,234,567,890");
+  });
+});
+
+describe("formatGasPrice", () => {
+  it("uses wei for gas prices up to six digits", () => {
+    expect(formatGasPrice(999_999n)).toBe("999,999 wei");
+  });
+
+  it("uses gwei when wei display would exceed six digits", () => {
+    expect(formatGasPrice(1_000_000n)).toBe("0.001 gwei");
+    expect(formatGasPrice(1_000_000_000n)).toBe("1 gwei");
   });
 });

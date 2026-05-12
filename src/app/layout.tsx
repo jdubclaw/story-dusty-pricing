@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Story Dusty Pricing",
+  title: "Story Gas Pricing",
   description: "Live Story blockspace gas pricing dashboard powered by front-end RPC reads.",
 };
 

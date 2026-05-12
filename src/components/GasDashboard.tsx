@@ -4,8 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BlockMetric,
   DEFAULT_LOW_UTILIZATION_GAS_PRICE,
-  formatDusty,
-  formatGweiLike,
+  formatGasPrice,
+  formatInteger,
+  formatWei,
   formatPercent,
   summarizeBlocks,
 } from "@/lib/gas-pricing";
@@ -105,10 +106,10 @@ export function GasDashboard() {
               <>
                 <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">recommended</div>
                 <div className="mt-3 font-mono text-5xl font-semibold tracking-tight text-zinc-950 sm:text-7xl">
-                  {formatGweiLike(summary.spamFilteredGasPrice)}
+                  {formatGasPrice(summary.spamFilteredGasPrice)}
                 </div>
                 <div className="mt-3 font-mono text-base text-zinc-500">
-                  {formatDusty(summary.spamFilteredGasPrice)} dusty / gas
+                  {formatWei(summary.spamFilteredGasPrice)} wei / gas
                 </div>
                 <div className="mt-6 grid gap-3 sm:grid-cols-3">
                   <Metric label="latest block" value={`#${summary.latestNumber.toLocaleString()}`} />
@@ -133,7 +134,7 @@ export function GasDashboard() {
             />
 
             <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-zinc-500">
-              Manual low-use price, dusty / gas
+              Manual low-use price, wei / gas
               <input
                 className="mt-2 w-full border border-zinc-300 bg-white px-3 py-2 font-mono text-sm outline-none focus:border-zinc-950"
                 inputMode="numeric"
@@ -162,8 +163,8 @@ export function GasDashboard() {
 
         {summary ? (
           <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <Metric label="observed latest" value={formatGweiLike(summary.latestObservedGasPrice)} subvalue={`${formatDusty(summary.latestObservedGasPrice)} dusty`} />
-            <Metric label="gas used" value={formatDusty(summary.latestGasUsed)} subvalue={`/ ${formatDusty(maxGasPerBlock ?? summary.latestGasLimit)}`} />
+            <Metric label="observed latest" value={formatGasPrice(summary.latestObservedGasPrice)} subvalue={`${formatWei(summary.latestObservedGasPrice)} wei`} />
+            <Metric label="gas used" value={formatInteger(summary.latestGasUsed)} subvalue={`/ ${formatInteger(maxGasPerBlock ?? summary.latestGasLimit)}`} />
             <Metric label="high-use blocks" value={formatPercent(summary.highUtilizationBlockRatio)} subvalue={`last ${blocks.length} blocks`} />
             <Metric label="avg utilization" value={formatPercent(summary.averageUtilization)} />
           </section>
@@ -175,7 +176,7 @@ export function GasDashboard() {
             {latestBlockRows.map((block) => (
               <div key={block.number} className="grid grid-cols-2 gap-2 border-b border-zinc-200 py-3 font-mono text-sm last:border-b-0 sm:grid-cols-4">
                 <div>#{block.number.toLocaleString()}</div>
-                <div>{formatGweiLike(block.observedGasPrice)}</div>
+                <div>{formatGasPrice(block.observedGasPrice)}</div>
                 <div>{formatPercent(block.utilization)}</div>
                 <div className="truncate text-zinc-500">{block.hash ?? "--"}</div>
               </div>
@@ -184,9 +185,10 @@ export function GasDashboard() {
 
           <div className="border border-zinc-200 bg-white p-5">
             <div className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">units</div>
-            <Row label="dusty" value="smallest gas price unit" />
-            <Row label="1 gwei" value="1,000,000,000 dusty" />
-            <Row label="0.0001 gwei" value="100,000 dusty" />
+            <Row label="wei" value="smallest gas price unit" />
+            <Row label="1 gwei" value="1,000,000,000 wei" />
+            <Row label="0.0001 gwei" value="100,000 wei" />
+            <Row label="display rule" value=">999,999 wei shown as gwei" />
             <Row label="sample window" value={`${SAMPLE_BLOCKS} blocks`} />
             <Row label="trust observed if" value=">=60% blocks over 50% full" />
           </div>
