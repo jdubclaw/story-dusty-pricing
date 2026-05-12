@@ -49,7 +49,7 @@ export async function fetchRecentBlocks(rpcUrl: string, count: number): Promise<
   const blocks = await Promise.all(
     Array.from({ length: Number(latest - first + 1n) }, async (_, index) => {
       const number = first + BigInt(index);
-      return rpc<RpcBlock | null>(rpcUrl, "eth_getBlockByNumber", [toBlockTag(number), false]);
+      return rpc<RpcBlock | null>(rpcUrl, "eth_getBlockByNumber", [toBlockTag(number), true]);
     }),
   );
 

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BlockMetric,
+  DEFAULT_LOW_UTILIZATION_GAS_PRICE,
   formatDusty,
   formatGweiLike,
   formatPercent,
@@ -28,15 +29,15 @@ function StatCard({ label, value, hint }: { label: string; value: string; hint?:
 }
 
 function SparkBars({ blocks }: { blocks: BlockMetric[] }) {
-  const maxFee = blocks.reduce((max, block) => (block.baseFeePerGas > max ? block.baseFeePerGas : max), 1n);
+  const maxFee = blocks.reduce((max, block) => (block.observedGasPrice > max ? block.observedGasPrice : max), 1n);
 
   return (
     <div className="flex h-36 items-end gap-1 rounded-3xl border border-cyan-300/10 bg-slate-950/60 p-4">
       {blocks.map((block) => {
-        const feeHeight = Number((block.baseFeePerGas * 100n) / maxFee);
+        const feeHeight = Number((block.observedGasPrice * 100n) / maxFee);
         const utilHeight = Math.max(3, Math.round(block.utilization * 100));
         return (
-          <div key={block.number} className="flex min-w-1 flex-1 flex-col items-center justify-end gap-1" title={`#${block.number}: ${formatGweiLike(block.baseFeePerGas)} · ${formatPercent(block.utilization)}`}>
+          <div key={block.number} className="flex min-w-1 flex-1 flex-col items-center justify-end gap-1" title={`#${block.number}: ${formatGweiLike(block.observedGasPrice)} · ${formatPercent(block.utilization)}`}>
             <div className="w-full rounded-t bg-fuchsia-400/80" style={{ height: `${Math.max(3, feeHeight)}%` }} />
             <div className="w-full rounded-t bg-cyan-300/80" style={{ height: `${utilHeight}%`, maxHeight: "42%" }} />
           </div>
@@ -50,13 +51,21 @@ export function GasDashboard() {
   const [rpcUrl, setRpcUrl] = useState(STORY_MAINNET_RPC_URL);
   const [blockCount, setBlockCount] = useState(24);
   const [maxGasPerBlockInput, setMaxGasPerBlockInput] = useState("");
+  const [manualGasPriceInput, setManualGasPriceInput] = useState(DEFAULT_LOW_UTILIZATION_GAS_PRICE.toString());
   const [blocks, setBlocks] = useState<BlockMetric[]>([]);
   const [status, setStatus] = useState("Ready");
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
 
   const maxGasPerBlock = useMemo(() => parseOptionalBigInt(maxGasPerBlockInput), [maxGasPerBlockInput]);
-  const summary = useMemo(() => summarizeBlocks(blocks, maxGasPerBlock), [blocks, maxGasPerBlock]);
+  const manualGasPrice = useMemo(
+    () => parseOptionalBigInt(manualGasPriceInput) ?? DEFAULT_LOW_UTILIZATION_GAS_PRICE,
+    [manualGasPriceInput],
+  );
+  const summary = useMemo(
+    () => summarizeBlocks(blocks, maxGasPerBlock, { manualLowUtilizationGasPrice: manualGasPrice }),
+    [blocks, manualGasPrice, maxGasPerBlock],
+  );
 
   const loadBlocks = useCallback(async () => {
     try {
@@ -95,7 +104,7 @@ export function GasDashboard() {
               Dusty pricing for Story block space, live.
             </h1>
             <p className="mt-5 max-w-2xl text-lg leading-8 text-slate-300">
-              A fully front-end Next.js dashboard that reads recent blocks from an EVM RPC, measures utilization, and projects the next base fee using Ethereum&apos;s gas pricing update rule. Override max gas per block to model Story&apos;s lower blockspace ceiling.
+              A fully front-end Next.js dashboard that reads recent blocks from an EVM RPC, measures utilization, filters low-utilization 1 gwei spam, and only trusts observed gas prices when blockspace demand is sustained.
             </p>
           </div>
 
@@ -129,6 +138,15 @@ export function GasDashboard() {
                   onChange={(event) => setMaxGasPerBlockInput(event.target.value)}
                 />
               </label>
+              <label className="text-sm font-semibold text-cyan-100 sm:col-span-2">
+                Manual low-utilization gas price, dusty / gas
+                <input
+                  className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-white outline-none ring-cyan-300/40 transition focus:ring-4"
+                  inputMode="numeric"
+                  value={manualGasPriceInput}
+                  onChange={(event) => setManualGasPriceInput(event.target.value)}
+                />
+              </label>
             </div>
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <button className="rounded-full bg-cyan-300 px-5 py-3 text-sm font-bold text-slate-950 transition hover:bg-cyan-200" onClick={() => void loadBlocks()}>
@@ -144,10 +162,10 @@ export function GasDashboard() {
         {summary ? (
           <>
             <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <StatCard label="Latest base fee" value={formatGweiLike(summary.latestBaseFeePerGas)} hint={`${formatDusty(summary.latestBaseFeePerGas)} dusty / gas`} />
-              <StatCard label="Projected next base fee" value={formatGweiLike(summary.projectedNextBaseFeePerGas)} hint="Ethereum EIP-1559 formula" />
+              <StatCard label="Recommended gas price" value={formatGweiLike(summary.spamFilteredGasPrice)} hint={`${formatDusty(summary.spamFilteredGasPrice)} dusty / gas · ${summary.spamFilterMode === "manual-low-utilization" ? "spam filter active" : "observed price trusted"}`} />
+              <StatCard label="Observed latest gas price" value={formatGweiLike(summary.latestObservedGasPrice)} hint="Median tx gas price in latest block" />
               <StatCard label="Latest utilization" value={formatPercent(summary.latestUtilization)} hint={`${formatDusty(summary.latestGasUsed)} / ${formatDusty(maxGasPerBlock ?? summary.latestGasLimit)} gas`} />
-              <StatCard label="Window average" value={formatPercent(summary.averageUtilization)} hint={`${formatGweiLike(summary.averageBaseFeePerGas)} average fee`} />
+              <StatCard label="Sustained demand signal" value={formatPercent(summary.highUtilizationBlockRatio)} hint="Blocks over 50% utilization in this window" />
             </section>
 
             <section className="grid gap-6 lg:grid-cols-[1fr_420px]">
@@ -155,7 +173,7 @@ export function GasDashboard() {
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h2 className="text-2xl font-bold">Recent block trend</h2>
-                    <p className="text-sm text-slate-300">Fuchsia = base fee, cyan = gas utilization.</p>
+                    <p className="text-sm text-slate-300">Fuchsia = observed gas price, cyan = gas utilization.</p>
                   </div>
                   <p className="text-sm text-slate-400">Latest #{summary.latestNumber.toLocaleString()}</p>
                 </div>
@@ -163,12 +181,12 @@ export function GasDashboard() {
               </div>
 
               <div className="rounded-[2rem] border border-white/10 bg-white/[0.06] p-5 backdrop-blur">
-                <h2 className="text-2xl font-bold">Algorithm</h2>
+                <h2 className="text-2xl font-bold">Spam filter</h2>
                 <p className="mt-3 text-sm leading-7 text-slate-300">
-                  Target gas is half of the effective max gas per block. If a block is above target, base fee rises by up to 12.5%; if below target, it falls proportionally. The override field lets you price a lower Story blockspace limit without changing the source RPC.
+                  One 1 gwei spam transaction in an otherwise empty block should not define the market price. The dashboard recommends the manual low-utilization price until at least 60% of the sampled blocks are above 50% utilization; only then does it trust the observed median transaction gas price.
                 </p>
                 <code className="mt-4 block rounded-2xl bg-slate-950/80 p-4 text-xs leading-6 text-cyan-100">
-                  next = parentBaseFee ± parentBaseFee × |gasUsed - target| ÷ target ÷ 8
+                  if sustainedUtilization &lt; 60% → use manual low price; else → use observed median gas price
                 </code>
               </div>
             </section>
@@ -179,7 +197,7 @@ export function GasDashboard() {
                 {latestBlockRows.map((block) => (
                   <div key={block.number} className="grid gap-3 rounded-2xl border border-white/10 bg-slate-950/50 p-4 text-sm md:grid-cols-4">
                     <span className="font-semibold text-white">#{block.number.toLocaleString()}</span>
-                    <span className="text-slate-300">{formatGweiLike(block.baseFeePerGas)}</span>
+                    <span className="text-slate-300">{formatGweiLike(block.observedGasPrice)} observed</span>
                     <span className="text-slate-300">{formatPercent(block.utilization)} full</span>
                     <span className="truncate text-slate-500">{block.hash ?? "pending hash"}</span>
                   </div>
