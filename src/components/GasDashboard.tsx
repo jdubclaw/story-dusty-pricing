@@ -8,6 +8,7 @@ import {
   formatInteger,
   formatWei,
   formatPercent,
+  parseGweiToWei,
   summarizeBlocks,
 } from "@/lib/gas-pricing";
 import { fetchRecentBlocks, STORY_MAINNET_RPC_URL } from "@/lib/story-rpc";
@@ -31,19 +32,10 @@ function Metric({ label, value, subvalue }: { label: string; value: string; subv
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid grid-cols-[1fr_auto] gap-4 border-b border-zinc-200 py-3 text-sm last:border-b-0">
-      <div className="text-zinc-500">{label}</div>
-      <div className="font-mono text-zinc-950">{value}</div>
-    </div>
-  );
-}
-
 export function GasDashboard() {
   const [rpcUrl, setRpcUrl] = useState(STORY_MAINNET_RPC_URL);
   const [maxGasPerBlockInput, setMaxGasPerBlockInput] = useState("");
-  const [manualGasPriceInput, setManualGasPriceInput] = useState(DEFAULT_LOW_UTILIZATION_GAS_PRICE.toString());
+  const [manualGasPriceInput, setManualGasPriceInput] = useState("0.0001");
   const [blocks, setBlocks] = useState<BlockMetric[]>([]);
   const [status, setStatus] = useState("Loading");
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +43,7 @@ export function GasDashboard() {
 
   const maxGasPerBlock = useMemo(() => parseOptionalBigInt(maxGasPerBlockInput), [maxGasPerBlockInput]);
   const manualGasPrice = useMemo(
-    () => parseOptionalBigInt(manualGasPriceInput) ?? DEFAULT_LOW_UTILIZATION_GAS_PRICE,
+    () => parseGweiToWei(manualGasPriceInput) ?? DEFAULT_LOW_UTILIZATION_GAS_PRICE,
     [manualGasPriceInput],
   );
   const summary = useMemo(
@@ -82,7 +74,7 @@ export function GasDashboard() {
   }, [loadBlocks]);
 
   const latestBlockRows = [...blocks].reverse().slice(0, 6);
-  const recommendationSource = summary?.spamFilterMode === "manual-low-utilization" ? "manual floor" : "observed median";
+  const recommendationSource = summary?.spamFilterMode === "manual-floor" ? "manual floor" : "observed p10";
 
   return (
     <main className="min-h-screen bg-zinc-50 text-zinc-950">
@@ -111,10 +103,9 @@ export function GasDashboard() {
                 <div className="mt-3 font-mono text-base text-zinc-500">
                   {formatWei(summary.spamFilteredGasPrice)} wei / gas
                 </div>
-                <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                <div className="mt-6 grid gap-3 sm:grid-cols-2">
                   <Metric label="latest block" value={`#${summary.latestNumber.toLocaleString()}`} />
                   <Metric label="utilization" value={formatPercent(summary.latestUtilization)} />
-                  <Metric label="source" value={recommendationSource} />
                 </div>
               </>
             ) : (
@@ -134,10 +125,10 @@ export function GasDashboard() {
             />
 
             <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-zinc-500">
-              Manual low-use price, wei / gas
+              Manual low-use price, gwei / gas
               <input
                 className="mt-2 w-full border border-zinc-300 bg-white px-3 py-2 font-mono text-sm outline-none focus:border-zinc-950"
-                inputMode="numeric"
+                inputMode="decimal"
                 value={manualGasPriceInput}
                 onChange={(event) => setManualGasPriceInput(event.target.value)}
               />
@@ -170,29 +161,23 @@ export function GasDashboard() {
           </section>
         ) : null}
 
-        <section className="grid gap-4 lg:grid-cols-[1fr_360px]">
-          <div className="border border-zinc-200 bg-white p-5">
-            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">latest blocks</div>
-            {latestBlockRows.map((block) => (
-              <div key={block.number} className="grid grid-cols-2 gap-2 border-b border-zinc-200 py-3 font-mono text-sm last:border-b-0 sm:grid-cols-4">
-                <div>#{block.number.toLocaleString()}</div>
-                <div>{formatGasPrice(block.observedGasPrice)}</div>
-                <div>{formatPercent(block.utilization)}</div>
-                <div className="truncate text-zinc-500">{block.hash ?? "--"}</div>
-              </div>
-            ))}
-          </div>
-
-          <div className="border border-zinc-200 bg-white p-5">
-            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">units</div>
-            <Row label="wei" value="smallest gas price unit" />
-            <Row label="1 gwei" value="1,000,000,000 wei" />
-            <Row label="0.0001 gwei" value="100,000 wei" />
-            <Row label="display rule" value=">999,999 wei shown as gwei" />
-            <Row label="sample window" value={`${SAMPLE_BLOCKS} blocks`} />
-            <Row label="trust observed if" value=">=60% blocks over 50% full" />
-          </div>
+        <section className="border border-zinc-200 bg-white p-5">
+          <div className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">latest blocks</div>
+          {latestBlockRows.map((block) => (
+            <div key={block.number} className="grid grid-cols-2 gap-2 border-b border-zinc-200 py-3 font-mono text-sm last:border-b-0 sm:grid-cols-4">
+              <div>#{block.number.toLocaleString()}</div>
+              <div>{formatGasPrice(block.observedGasPrice)}</div>
+              <div>{formatPercent(block.utilization)}</div>
+              <div className="truncate text-zinc-500">{block.hash ?? "--"}</div>
+            </div>
+          ))}
         </section>
+
+        {summary ? (
+          <p className="text-sm leading-6 text-zinc-500">
+            Recommendation source: <span className="font-mono text-zinc-700">{recommendationSource}</span>. The predictor uses the 10th percentile of included transaction gas prices from the last {SAMPLE_BLOCKS} blocks, so high-priced spam is treated as upper-tail noise. If there are too few transaction samples, it falls back to the manual low-use floor. Units: 1 gwei = 1,000,000,000 wei; prices are stored as wei internally and displayed as gwei.
+          </p>
+        ) : null}
       </section>
     </main>
   );

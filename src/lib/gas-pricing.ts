@@ -20,6 +20,7 @@ export type BlockMetric = {
   gasLimit: bigint;
   baseFeePerGas: bigint;
   observedGasPrice: bigint;
+  transactionGasPrices: bigint[];
   utilization: number;
   hash?: string | null;
 };
@@ -48,23 +49,40 @@ export type BlockSummary = {
   isSustainedHighUtilization: boolean;
 };
 
-export type SpamFilterMode = "manual-low-utilization" | "observed-sustained-utilization";
+export type SpamFilterMode = "manual-floor" | "observed-low-percentile";
 
 export type SpamFilterOptions = {
   manualLowUtilizationGasPrice?: bigint;
   highUtilizationThreshold?: number;
   sustainedHighUtilizationRatio?: number;
+  observedGasPricePercentile?: number;
+  minObservedGasPriceSamples?: number;
 };
 
 const BASE_FEE_MAX_CHANGE_DENOMINATOR = 8n;
 const ELASTICITY_MULTIPLIER = 2n;
+export const GWEI_IN_WEI = 1_000_000_000n;
 export const DEFAULT_LOW_UTILIZATION_GAS_PRICE = 100_000n; // 0.0001 gwei / gas.
 const DEFAULT_HIGH_UTILIZATION_THRESHOLD = 0.5;
 const DEFAULT_SUSTAINED_HIGH_UTILIZATION_RATIO = 0.6;
+const DEFAULT_OBSERVED_GAS_PRICE_PERCENTILE = 0.1;
+const DEFAULT_MIN_OBSERVED_GAS_PRICE_SAMPLES = 4;
 
 export function parseHexQuantity(value: string | null | undefined): bigint {
   if (!value) return 0n;
   return BigInt(value);
+}
+
+export function parseGweiToWei(value: string): bigint | undefined {
+  const trimmed = value.trim().replaceAll(",", "");
+  if (!trimmed) return undefined;
+
+  const match = /^(\d+)(?:\.(\d{0,9}))?$/.exec(trimmed);
+  if (!match) return undefined;
+
+  const [, wholeGwei, fractionalGwei = ""] = match;
+  const fractionalWei = fractionalGwei.padEnd(9, "0");
+  return BigInt(wholeGwei) * GWEI_IN_WEI + BigInt(fractionalWei);
 }
 
 export function calculateNextBaseFeePerGas({
@@ -103,6 +121,14 @@ function medianBigInt(values: bigint[]): bigint {
   return sorted[Math.floor(sorted.length / 2)];
 }
 
+function percentileBigInt(values: bigint[], percentile: number): bigint {
+  if (values.length === 0) return 0n;
+  const sorted = [...values].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const boundedPercentile = Math.max(0, Math.min(1, percentile));
+  const index = Math.floor((sorted.length - 1) * boundedPercentile);
+  return sorted[index];
+}
+
 function getTransactionGasPrices(block: RpcBlock): bigint[] {
   return (block.transactions ?? [])
     .filter((transaction): transaction is RpcTransaction => typeof transaction === "object" && transaction !== null)
@@ -114,7 +140,8 @@ export function normalizeRpcBlock(block: RpcBlock): BlockMetric {
   const gasUsed = parseHexQuantity(block.gasUsed);
   const gasLimit = parseHexQuantity(block.gasLimit);
   const baseFeePerGas = parseHexQuantity(block.baseFeePerGas);
-  const transactionGasPrice = medianBigInt(getTransactionGasPrices(block));
+  const transactionGasPrices = getTransactionGasPrices(block);
+  const transactionGasPrice = medianBigInt(transactionGasPrices);
 
   return {
     number: Number(parseHexQuantity(block.number)),
@@ -123,6 +150,7 @@ export function normalizeRpcBlock(block: RpcBlock): BlockMetric {
     gasLimit,
     baseFeePerGas,
     observedGasPrice: transactionGasPrice > 0n ? transactionGasPrice : baseFeePerGas,
+    transactionGasPrices,
     utilization: gasLimit === 0n ? 0 : Number(gasUsed) / Number(gasLimit),
     hash: block.hash,
   };
@@ -137,10 +165,12 @@ export function estimateSpamFilteredGasPrice(
   highUtilizationBlockRatio: number;
   isSustainedHighUtilization: boolean;
 } {
+  const manualFloor = options.manualLowUtilizationGasPrice ?? DEFAULT_LOW_UTILIZATION_GAS_PRICE;
+
   if (blocks.length === 0) {
     return {
-      gasPrice: options.manualLowUtilizationGasPrice ?? DEFAULT_LOW_UTILIZATION_GAS_PRICE,
-      mode: "manual-low-utilization",
+      gasPrice: manualFloor,
+      mode: "manual-floor",
       highUtilizationBlockRatio: 0,
       isSustainedHighUtilization: false,
     };
@@ -152,21 +182,24 @@ export function estimateSpamFilteredGasPrice(
   const highUtilizationBlocks = blocks.filter((block) => block.utilization >= highUtilizationThreshold).length;
   const highUtilizationBlockRatio = highUtilizationBlocks / blocks.length;
   const isSustainedHighUtilization = highUtilizationBlockRatio >= sustainedHighUtilizationRatio;
+  const observedGasPrices = blocks.flatMap((block) => block.transactionGasPrices).filter((price) => price > 0n);
+  const minObservedGasPriceSamples = options.minObservedGasPriceSamples ?? DEFAULT_MIN_OBSERVED_GAS_PRICE_SAMPLES;
 
-  if (!isSustainedHighUtilization) {
+  if (observedGasPrices.length < minObservedGasPriceSamples) {
     return {
-      gasPrice: options.manualLowUtilizationGasPrice ?? DEFAULT_LOW_UTILIZATION_GAS_PRICE,
-      mode: "manual-low-utilization",
+      gasPrice: manualFloor,
+      mode: "manual-floor",
       highUtilizationBlockRatio,
       isSustainedHighUtilization,
     };
   }
 
-  const observedPrices = blocks.map((block) => block.observedGasPrice || block.baseFeePerGas).filter((price) => price > 0n);
+  const percentile = options.observedGasPricePercentile ?? DEFAULT_OBSERVED_GAS_PRICE_PERCENTILE;
+  const observedGasPrice = percentileBigInt(observedGasPrices, percentile);
 
   return {
-    gasPrice: medianBigInt(observedPrices),
-    mode: "observed-sustained-utilization",
+    gasPrice: observedGasPrice > manualFloor ? observedGasPrice : manualFloor,
+    mode: "observed-low-percentile",
     highUtilizationBlockRatio,
     isSustainedHighUtilization,
   };
@@ -219,11 +252,7 @@ export function formatWei(value: bigint): string {
 }
 
 export function formatGasPrice(value: bigint): string {
-  if (value <= 999_999n) {
-    return `${formatWei(value)} wei`;
-  }
-
-  return `${(Number(value) / 1_000_000_000).toLocaleString("en-US", {
+  return `${(Number(value) / Number(GWEI_IN_WEI)).toLocaleString("en-US", {
     maximumFractionDigits: 6,
   })} gwei`;
 }

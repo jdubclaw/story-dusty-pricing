@@ -6,6 +6,7 @@ import {
   formatGasPrice,
   formatInteger,
   normalizeRpcBlock,
+  parseGweiToWei,
   summarizeBlocks,
 } from "./gas-pricing";
 
@@ -76,39 +77,57 @@ describe("normalizeRpcBlock", () => {
 });
 
 describe("estimateSpamFilteredGasPrice", () => {
-  it("returns a very low manual gas price when 1 gwei transactions appear in mostly empty blocks", () => {
+  it("returns the manual floor when there are no transaction price samples", () => {
     const blocks = Array.from({ length: 24 }, (_, index) => ({
       number: index + 1,
       timestamp: index + 1,
       gasUsed: 21_000n,
       gasLimit: 36_000_000n,
-      baseFeePerGas: 1_000_000_000n,
-      observedGasPrice: 1_000_000_000n,
+      baseFeePerGas: 0n,
+      observedGasPrice: 0n,
+      transactionGasPrices: [],
       utilization: 21_000 / 36_000_000,
     }));
 
     expect(estimateSpamFilteredGasPrice(blocks)).toMatchObject({
       gasPrice: DEFAULT_LOW_UTILIZATION_GAS_PRICE,
-      mode: "manual-low-utilization",
-      isSustainedHighUtilization: false,
+      mode: "manual-floor",
     });
   });
 
-  it("trusts observed gas price when utilization is consistently high", () => {
+  it("uses a low transaction price percentile to ignore high-priced spam", () => {
     const blocks = Array.from({ length: 24 }, (_, index) => ({
       number: index + 1,
       timestamp: index + 1,
-      gasUsed: 30_000_000n,
+      gasUsed: 3_000_000n,
       gasLimit: 36_000_000n,
-      baseFeePerGas: 1_000_000_000n,
-      observedGasPrice: 1_000_000_000n,
-      utilization: 30_000_000 / 36_000_000,
+      baseFeePerGas: 0n,
+      observedGasPrice: 100_000_000n,
+      transactionGasPrices: [100_000n, 100_000_000n, 100_000_000n, 100_000_000n],
+      utilization: 3_000_000 / 36_000_000,
     }));
 
     expect(estimateSpamFilteredGasPrice(blocks)).toMatchObject({
-      gasPrice: 1_000_000_000n,
-      mode: "observed-sustained-utilization",
-      isSustainedHighUtilization: true,
+      gasPrice: 100_000n,
+      mode: "observed-low-percentile",
+    });
+  });
+
+  it("keeps the manual floor as the minimum recommended gas price", () => {
+    const blocks = Array.from({ length: 8 }, (_, index) => ({
+      number: index + 1,
+      timestamp: index + 1,
+      gasUsed: 3_000_000n,
+      gasLimit: 36_000_000n,
+      baseFeePerGas: 0n,
+      observedGasPrice: 10_000n,
+      transactionGasPrices: [10_000n, 10_000n, 100_000_000n],
+      utilization: 3_000_000 / 36_000_000,
+    }));
+
+    expect(estimateSpamFilteredGasPrice(blocks)).toMatchObject({
+      gasPrice: DEFAULT_LOW_UTILIZATION_GAS_PRICE,
+      mode: "observed-low-percentile",
     });
   });
 });
@@ -125,8 +144,22 @@ describe("summarizeBlocks", () => {
       averageUtilization: 0.5,
       averageBaseFeePerGas: 1_000_000_000n,
       projectedNextBaseFeePerGas: 1_075_000_000n,
-      spamFilteredGasPrice: 100_000n,
+      spamFilteredGasPrice: DEFAULT_LOW_UTILIZATION_GAS_PRICE,
     });
+  });
+});
+
+describe("parseGweiToWei", () => {
+  it("converts whole and fractional gwei strings into wei", () => {
+    expect(parseGweiToWei("1")).toBe(1_000_000_000n);
+    expect(parseGweiToWei("0.5")).toBe(500_000_000n);
+    expect(parseGweiToWei("0.000000001")).toBe(1n);
+  });
+
+  it("rejects invalid or over-precise gwei strings", () => {
+    expect(parseGweiToWei("")).toBeUndefined();
+    expect(parseGweiToWei("abc")).toBeUndefined();
+    expect(parseGweiToWei("0.0000000001")).toBeUndefined();
   });
 });
 
@@ -137,12 +170,9 @@ describe("formatInteger", () => {
 });
 
 describe("formatGasPrice", () => {
-  it("uses wei for gas prices up to six digits", () => {
-    expect(formatGasPrice(999_999n)).toBe("999,999 wei");
-  });
-
-  it("uses gwei when wei display would exceed six digits", () => {
-    expect(formatGasPrice(1_000_000n)).toBe("0.001 gwei");
+  it("formats gas prices in gwei units", () => {
+    expect(formatGasPrice(100_000n)).toBe("0.0001 gwei");
+    expect(formatGasPrice(999_999n)).toBe("0.001 gwei");
     expect(formatGasPrice(1_000_000_000n)).toBe("1 gwei");
   });
 });
